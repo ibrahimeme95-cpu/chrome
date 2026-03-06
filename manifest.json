@@ -2,19 +2,21 @@
   "manifest_version": 3,
   "name": "PTC Autofill Extension",
   "version": "1.0",
-  "description": "Autofill Eightfold AI job application forms",
-  "permissions": ["activeTab", "scripting"],
+  "description": "Autofill Eightfold AI job application forms on PTC careers website",
+  "permissions": ["activeTab", "scripting", "tabs"],
   "host_permissions": ["https://ptc.eightfold.ai/*"],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Autofill Form"
+    "default_title": "PTC Autofill - Click to start",
+    "default_popup": "popup.html"
   },
   "content_scripts": [
     {
       "matches": ["https://ptc.eightfold.ai/*"],
-      "js": ["content.js"]
+      "js": ["content.js"],
+      "run_at": "document_idle"
     }
   ]
 }

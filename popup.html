@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PTC Autofill</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>PTC Autofill</h1>
+      <p class="subtitle">Eightfold AI Job Application</p>
+    </div>
+
+    <div class="content">
+      <div class="info-box">
+        <p>Click the button below to automatically fill the job application form on PTC's careers website.</p>
+      </div>
+
+      <button id="startAutofill" class="btn btn-primary">
+        <span class="btn-icon">&#9889;</span>
+        Start Autofill
+      </button>
+
+      <div id="status" class="status hidden">
+        <div class="status-message"></div>
+      </div>
+
+      <div class="data-preview">
+        <h3>Current Data</h3>
+        <div class="data-item">
+          <span class="data-label">Name:</span>
+          <span class="data-value">John Doe</span>
+        </div>
+        <div class="data-item">
+          <span class="data-label">Email:</span>
+          <span class="data-value">john.doe@example.com</span>
+        </div>
+        <div class="data-item">
+          <span class="data-label">Phone:</span>
+          <span class="data-value">5551234567</span>
+        </div>
+        <div class="data-item">
+          <span class="data-label">Location:</span>
+          <span class="data-value">San Francisco, CA</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>Version 1.0 | PTC Eightfold AI</p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
