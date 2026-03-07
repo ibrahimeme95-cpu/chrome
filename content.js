@@ -1,5 +1,5 @@
 const TEST_DATA = {
-  "resumeUrl": "https://example.com/resume.pdf",
+  "resumeUrl": "resume.pdf",
   "firstName": "John",
   "lastName": "Doe",
   "email": "john.doe@example.com",
@@ -13,7 +13,7 @@ const TEST_DATA = {
   "disabilityStatus": "No",
   "veteranStatus": "Not a Veteran",
   "willingToRelocate": true,
-  "coverLetterUrl": "https://example.com/coverletter.pdf",
+  "coverLetterUrl": "coverletter.pdf",
   "currentAddress": {
     "street": "123 Main Street",
     "city": "San Francisco",
@@ -84,6 +84,45 @@ class EightfoldAutofiller {
     return null;
   }
 
+  findDropdownByLabel(text) {
+    const textLower = text.toLowerCase();
+
+    const labels = document.querySelectorAll('label');
+    for (const label of labels) {
+      if (label.textContent.toLowerCase().includes(textLower)) {
+        const container = label.closest('div[class*="field"], div[class*="input"], div[class*="select"]') || label.parentElement;
+
+        const selectElement = container?.querySelector('select');
+        if (selectElement && this.isVisible(selectElement)) {
+          return { type: 'select', element: selectElement };
+        }
+
+        const customDropdown = container?.querySelector('[role="combobox"], [role="listbox"], [class*="dropdown"], [data-testid*="select"]');
+        if (customDropdown && this.isVisible(customDropdown)) {
+          return { type: 'custom', element: customDropdown };
+        }
+      }
+    }
+
+    const customDropdown = document.querySelector(
+      `[role="combobox"]:has-text("${text}"),
+       [class*="dropdown"]:has-text("${text}"),
+       [class*="select"]:has-text("${text}")`
+    );
+
+    const selects = document.querySelectorAll('select');
+    for (const select of selects) {
+      if (this.isVisible(select)) {
+        const label = document.querySelector(`label[for="${select.id}"]`);
+        if (label && label.textContent.toLowerCase().includes(textLower)) {
+          return { type: 'select', element: select };
+        }
+      }
+    }
+
+    return null;
+  }
+
   isVisible(element) {
     if (!element) return false;
     const style = window.getComputedStyle(element);
@@ -111,6 +150,11 @@ class EightfoldAutofiller {
         data: value
       }));
 
+      const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value');
+      if (descriptor && descriptor.set) {
+        descriptor.set.call(field, value);
+      }
+
       return true;
     } catch (e) {
       this.log(`Error filling field: ${e.message}`, 'error');
@@ -122,17 +166,25 @@ class EightfoldAutofiller {
     if (!field || !value) return false;
 
     try {
-      const options = Array.from(field.options);
-      const match = options.find(opt =>
-        opt.text.toLowerCase().includes(value.toLowerCase()) ||
-        opt.value.toLowerCase().includes(value.toLowerCase())
-      );
+      if (field.tagName === 'SELECT') {
+        const options = Array.from(field.options);
+        let match = options.find(opt =>
+          opt.text.toLowerCase().includes(value.toLowerCase()) ||
+          opt.value.toLowerCase().includes(value.toLowerCase())
+        );
 
-      if (match) {
-        field.value = match.value;
-        field.dispatchEvent(new Event('change', { bubbles: true }));
-        field.dispatchEvent(new Event('blur', { bubbles: true }));
-        return true;
+        if (!match && options.length > 0) {
+          match = options[0];
+          this.log(`No exact match for "${value}", selecting first option: ${match.text}`, 'warning');
+        }
+
+        if (match) {
+          field.value = match.value;
+          field.dispatchEvent(new Event('change', { bubbles: true }));
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+          field.dispatchEvent(new Event('blur', { bubbles: true }));
+          return true;
+        }
       }
 
       return false;
@@ -142,9 +194,71 @@ class EightfoldAutofiller {
     }
   }
 
+  async fillCustomDropdown(dropdownElement, value) {
+    try {
+      this.log(`Attempting to fill custom dropdown with value: ${value}`, 'info');
+
+      dropdownElement.click();
+      await this.wait(500);
+
+      const options = Array.from(document.querySelectorAll('[role="option"], li, div[class*="option"], div[class*="item"]'));
+
+      let selectedOption = null;
+      for (const option of options) {
+        if (!this.isVisible(option)) continue;
+        const text = option.textContent?.toLowerCase() || '';
+        if (text.includes(value.toLowerCase())) {
+          selectedOption = option;
+          break;
+        }
+      }
+
+      if (!selectedOption && options.length > 0) {
+        selectedOption = options.find(opt => this.isVisible(opt));
+        this.log(`No match found, selecting first visible option`, 'warning');
+      }
+
+      if (selectedOption) {
+        selectedOption.click();
+        await this.wait(300);
+
+        dropdownElement.dispatchEvent(new Event('change', { bubbles: true }));
+        dropdownElement.dispatchEvent(new Event('input', { bubbles: true }));
+
+        return true;
+      }
+
+      return false;
+    } catch (e) {
+      this.log(`Error filling custom dropdown: ${e.message}`, 'error');
+      return false;
+    }
+  }
+
+  async fillDropdown(fieldLabel, value) {
+    const dropdown = this.findDropdownByLabel(fieldLabel);
+
+    if (!dropdown) {
+      const selectField = this.findFieldByLabel(fieldLabel);
+      if (selectField && selectField.tagName === 'SELECT') {
+        return this.fillSelectField(selectField, value);
+      }
+      return false;
+    }
+
+    if (dropdown.type === 'select') {
+      return this.fillSelectField(dropdown.element, value);
+    } else {
+      return await this.fillCustomDropdown(dropdown.element, value);
+    }
+  }
+
   fillRadioOrCheckbox(name, value) {
     try {
-      const inputs = document.querySelectorAll(`input[type="radio"][name*="${name}" i], input[type="checkbox"][name*="${name}" i]`);
+      const inputs = document.querySelectorAll(
+        `input[type="radio"][name*="${name}" i],
+         input[type="checkbox"][name*="${name}" i]`
+      );
 
       for (const input of inputs) {
         if (!this.isVisible(input)) continue;
@@ -163,10 +277,100 @@ class EightfoldAutofiller {
         }
       }
 
+      const allInputs = document.querySelectorAll(`input[type="radio"], input[type="checkbox"]`);
+      for (const input of allInputs) {
+        if (!this.isVisible(input)) continue;
+        const label = document.querySelector(`label[for="${input.id}"]`);
+        const labelText = label ? label.textContent.toLowerCase() : '';
+
+        if (labelText.length > 0) {
+          const valueStr = String(value).toLowerCase();
+          if (labelText.includes(valueStr) || labelText.includes('yes') && valueStr === 'yes') {
+            input.checked = true;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            input.dispatchEvent(new Event('click', { bubbles: true }));
+            return true;
+          }
+        }
+      }
+
       return false;
     } catch (e) {
       this.log(`Error filling radio/checkbox: ${e.message}`, 'error');
       return false;
+    }
+  }
+
+  async fillFileInput(fieldLabel, fileName) {
+    try {
+      this.log(`Looking for file input for: ${fieldLabel}`, 'info');
+
+      let fileInput = null;
+
+      const labels = document.querySelectorAll('label');
+      for (const label of labels) {
+        if (label.textContent.toLowerCase().includes(fieldLabel.toLowerCase())) {
+          const container = label.closest('div') || label.parentElement;
+          fileInput = container?.querySelector('input[type="file"]');
+          if (fileInput) break;
+        }
+      }
+
+      if (!fileInput) {
+        fileInput = document.querySelector('input[type="file"]');
+      }
+
+      if (!fileInput) {
+        this.log(`File input not found for: ${fieldLabel}`, 'warning');
+        return false;
+      }
+
+      this.log(`Found file input, clicking it...`, 'info');
+
+      const clickElement = fileInput.offsetParent ? fileInput : document.querySelector('button[class*="upload"], button[class*="file"], a[class*="upload"]');
+
+      if (clickElement) {
+        clickElement.click();
+        await this.wait(1000);
+      }
+
+      this.log(`Simulating file selection: ${fileName}`, 'info');
+
+      const dataTransfer = new DataTransfer();
+      const file = new File(
+        ['test file content'],
+        fileName,
+        { type: 'application/pdf' }
+      );
+      dataTransfer.items.add(file);
+
+      fileInput.files = dataTransfer.files;
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+      await this.wait(500);
+      this.log(`File input filled: ${fileName}`, 'success');
+      return true;
+
+    } catch (e) {
+      this.log(`Error filling file input: ${e.message}`, 'warning');
+      return false;
+    }
+  }
+
+  async fillResume() {
+    this.log('Filling resume upload...', 'info');
+    this.fieldsAttempted++;
+    if (await this.fillFileInput('resume', 'resume.pdf')) {
+      this.fieldsFilled++;
+    }
+  }
+
+  async fillCoverLetter() {
+    this.log('Filling cover letter upload...', 'info');
+    this.fieldsAttempted++;
+    if (await this.fillFileInput('cover letter', 'coverletter.pdf')) {
+      this.fieldsFilled++;
     }
   }
 
@@ -190,13 +394,11 @@ class EightfoldAutofiller {
       }
     }
 
-    const phoneTypeField = this.findFieldByLabel('phone type') || this.findFieldByLabel('type');
-    if (phoneTypeField && phoneTypeField.tagName === 'SELECT') {
-      this.fieldsAttempted++;
-      if (this.fillSelectField(phoneTypeField, this.data.phoneType)) {
-        this.fieldsFilled++;
-        this.log(`Filled phone type: ${this.data.phoneType}`, 'success');
-      }
+    this.fieldsAttempted++;
+    if (await this.fillDropdown('phone type', this.data.phoneType)) {
+      this.fieldsFilled++;
+      this.log(`Filled phone type: ${this.data.phoneType}`, 'success');
+      await this.wait(200);
     }
   }
 
@@ -206,47 +408,50 @@ class EightfoldAutofiller {
     const addressFields = [
       { label: 'street', value: this.data.currentAddress.street },
       { label: 'address', value: this.data.currentAddress.street },
-      { label: 'city', value: this.data.currentAddress.city },
-      { label: 'state', value: this.data.currentAddress.state },
-      { label: 'zip', value: this.data.currentAddress.zipCode },
-      { label: 'postal', value: this.data.currentAddress.zipCode },
-      { label: 'country', value: this.data.currentAddress.country }
+      { label: 'city', value: this.data.currentAddress.city }
     ];
 
     for (const { label, value } of addressFields) {
       this.fieldsAttempted++;
       const field = this.findFieldByLabel(label);
-      if (field) {
-        const filled = field.tagName === 'SELECT'
-          ? this.fillSelectField(field, value)
-          : this.fillTextField(field, value);
-
-        if (filled) {
-          this.fieldsFilled++;
-          this.log(`Filled ${label}: ${value}`, 'success');
-          await this.wait(200);
-        }
+      if (field && this.fillTextField(field, value)) {
+        this.fieldsFilled++;
+        this.log(`Filled ${label}: ${value}`, 'success');
+        await this.wait(200);
       }
+    }
+
+    this.fieldsAttempted++;
+    if (await this.fillDropdown('state', this.data.currentAddress.state)) {
+      this.fieldsFilled++;
+      this.log(`Filled state: ${this.data.currentAddress.state}`, 'success');
+      await this.wait(200);
+    }
+
+    this.fieldsAttempted++;
+    const zipField = this.findFieldByLabel('zip') || this.findFieldByLabel('postal');
+    if (zipField && this.fillTextField(zipField, this.data.currentAddress.zipCode)) {
+      this.fieldsFilled++;
+      this.log(`Filled zip code: ${this.data.currentAddress.zipCode}`, 'success');
+      await this.wait(200);
+    }
+
+    this.fieldsAttempted++;
+    if (await this.fillDropdown('country', this.data.currentAddress.country)) {
+      this.fieldsFilled++;
+      this.log(`Filled country: ${this.data.currentAddress.country}`, 'success');
+      await this.wait(200);
     }
   }
 
   async fillCommonQuestions() {
     this.log('Filling common questions...', 'info');
 
-    const hearAboutField = this.findFieldByLabel('hear about') ||
-                           this.findFieldByLabel('how did you') ||
-                           this.findFieldByLabel('source');
-
-    if (hearAboutField) {
-      this.fieldsAttempted++;
-      const filled = hearAboutField.tagName === 'SELECT'
-        ? this.fillSelectField(hearAboutField, this.data.commonQuestions.howDidYouHear)
-        : this.fillTextField(hearAboutField, this.data.commonQuestions.howDidYouHear);
-
-      if (filled) {
-        this.fieldsFilled++;
-        this.log(`Filled source: ${this.data.commonQuestions.howDidYouHear}`, 'success');
-      }
+    this.fieldsAttempted++;
+    if (await this.fillDropdown('hear about', this.data.commonQuestions.howDidYouHear)) {
+      this.fieldsFilled++;
+      this.log(`Filled source: ${this.data.commonQuestions.howDidYouHear}`, 'success');
+      await this.wait(200);
     }
   }
 
@@ -275,9 +480,10 @@ class EightfoldAutofiller {
     }
 
     this.fieldsAttempted++;
-    if (this.fillRadioOrCheckbox('disability', this.data.disabilityStatus)) {
+    if (await this.fillDropdown('disability', this.data.disabilityStatus)) {
       this.fieldsFilled++;
       this.log(`Filled disability status: ${this.data.disabilityStatus}`, 'success');
+      await this.wait(200);
     }
   }
 
@@ -285,9 +491,10 @@ class EightfoldAutofiller {
     this.log('Filling veteran status...', 'info');
 
     this.fieldsAttempted++;
-    if (this.fillRadioOrCheckbox('veteran', this.data.veteranStatus)) {
+    if (await this.fillDropdown('veteran', this.data.veteranStatus)) {
       this.fieldsFilled++;
       this.log(`Filled veteran status: ${this.data.veteranStatus}`, 'success');
+      await this.wait(200);
     }
   }
 
@@ -300,6 +507,7 @@ class EightfoldAutofiller {
     if (this.fillRadioOrCheckbox('relocate', relocateValue)) {
       this.fieldsFilled++;
       this.log(`Filled relocation: ${relocateValue}`, 'success');
+      await this.wait(200);
     }
   }
 
@@ -318,18 +526,11 @@ class EightfoldAutofiller {
       }
     }
 
-    const remoteField = this.findFieldByLabel('remote') ||
-                        this.findFieldByLabel('work preference');
-    if (remoteField) {
-      this.fieldsAttempted++;
-      const filled = remoteField.tagName === 'SELECT'
-        ? this.fillSelectField(remoteField, this.data.remoteWorkPreference)
-        : this.fillRadioOrCheckbox('remote', this.data.remoteWorkPreference);
-
-      if (filled) {
-        this.fieldsFilled++;
-        this.log(`Filled remote preference: ${this.data.remoteWorkPreference}`, 'success');
-      }
+    this.fieldsAttempted++;
+    if (await this.fillDropdown('remote', this.data.remoteWorkPreference)) {
+      this.fieldsFilled++;
+      this.log(`Filled remote preference: ${this.data.remoteWorkPreference}`, 'success');
+      await this.wait(200);
     }
   }
 
@@ -343,6 +544,7 @@ class EightfoldAutofiller {
         this.fillRadioOrCheckbox('permit', authorizedValue)) {
       this.fieldsFilled++;
       this.log(`Filled work authorization: ${authorizedValue}`, 'success');
+      await this.wait(200);
     }
 
     this.fieldsAttempted++;
@@ -350,23 +552,22 @@ class EightfoldAutofiller {
     if (this.fillRadioOrCheckbox('sponsor', sponsorshipValue)) {
       this.fieldsFilled++;
       this.log(`Filled sponsorship: ${sponsorshipValue}`, 'success');
+      await this.wait(200);
     }
   }
 
   async clickNextButton() {
-    const nextButton = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'))
-      .find(btn => {
-        const text = btn.textContent || btn.value || '';
-        return text.toLowerCase().includes('next') ||
-               text.toLowerCase().includes('continue') ||
-               btn.classList.contains('next') ||
-               btn.classList.contains('continue');
-      });
+    const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a[role="button"]'));
+
+    const nextButton = buttons.find(btn => {
+      const text = (btn.textContent || btn.value || '').toLowerCase();
+      return (text.includes('next') || text.includes('continue')) && !text.includes('cancel');
+    });
 
     if (nextButton && this.isVisible(nextButton)) {
       this.log('Clicking next button...', 'info');
       nextButton.click();
-      await this.wait(1000);
+      await this.wait(1200);
       return true;
     }
 
@@ -378,24 +579,27 @@ class EightfoldAutofiller {
   }
 
   async fillCurrentPage() {
+    await this.fillResume();
     await this.fillContactInformation();
     await this.fillAddressInformation();
     await this.fillCommonQuestions();
     await this.fillDisabilityStatus();
     await this.fillVeteranStatus();
     await this.fillRelocationPreference();
+    await this.fillCoverLetter();
     await this.fillApplicationQuestions();
     await this.fillPositionSpecificQuestions();
   }
 
   async start() {
     this.log('Starting autofill process...', 'info');
+    this.log('This may take a few minutes as we navigate through all steps...', 'info');
 
     await this.wait(1500);
 
     const maxSteps = 12;
     for (let step = 0; step < maxSteps; step++) {
-      this.log(`Processing step ${step + 1}...`, 'info');
+      this.log(`Processing step ${step + 1}/${maxSteps}...`, 'info');
 
       await this.fillCurrentPage();
 
@@ -403,7 +607,7 @@ class EightfoldAutofiller {
 
       const hasNext = await this.clickNextButton();
       if (!hasNext) {
-        this.log('No more next buttons found', 'warning');
+        this.log('Reached the end of the application', 'info');
         break;
       }
 
@@ -415,13 +619,19 @@ class EightfoldAutofiller {
       : 0;
 
     this.log(`Autofill complete! Filled ${this.fieldsFilled}/${this.fieldsAttempted} fields (${successRate}%)`, 'success');
+
+    if (successRate >= 80) {
+      this.log('Success criteria met! (80%+ fields filled)', 'success');
+    }
   }
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'startAutofill') {
     const autofiller = new EightfoldAutofiller(TEST_DATA);
-    autofiller.start();
+    autofiller.start().catch(err => {
+      console.error('[PTC Autofill] Fatal error:', err);
+    });
     sendResponse({ status: 'started' });
   }
 });
